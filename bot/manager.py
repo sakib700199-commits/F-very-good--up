@@ -1,9 +1,8 @@
 """
 ============================================================================
-TELEGRAM UPTIME BOT - DATABASE MANAGER
+TELEGRAM UPTIME BOT - BOT MANAGER
 ============================================================================
-Comprehensive database management system with connection pooling,
-session management, and transaction handling.
+Main bot initialization and management.
 
 Author: Professional Development Team
 Version: 1.0.0
@@ -12,635 +11,239 @@ License: MIT
 """
 
 import asyncio
-import logging
-from typing import Optional, AsyncGenerator, Dict, Any, List
-from contextlib import asynccontextmanager
-from datetime import datetime
+from typing import Optional
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
 
-from sqlalchemy.ext.asyncio import (
-    create_async_engine,
-    AsyncSession,
-    AsyncEngine,
-    async_sessionmaker
-)
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import event, text, select, and_, or_
-from sqlalchemy.pool import NullPool, QueuePool
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError, OperationalError
-
-from database.models import Base, User, MonitoredLink, PingLog, Alert, UserLog, Statistics
-from config.settings import Settings
-from utils.logger import get_logger
+from database import DatabaseManager
+from bot.handlers import router
+from bot.admin_handlers import admin_router
+from utils import get_logger
+from config import get_settings
 
 
 logger = get_logger(__name__)
+settings = get_settings()
 
 
 # ============================================================================
-# DATABASE MANAGER CLASS
+# BOT MANAGER CLASS
 # ============================================================================
 
-class DatabaseManager:
+class BotManager:
     """
-    Comprehensive database manager for handling all database operations.
-    Implements connection pooling, session management, and transaction handling.
+    Main bot manager class.
+    Handles bot initialization, routing, and lifecycle management.
     """
 
-    def __init__(self, settings: Settings):
+    def __init__(self, db_manager: DatabaseManager):
         """
-        Initialize database manager.
+        Initialize bot manager.
 
         Args:
-            settings: Application settings instance
+            db_manager: Database manager instance
         """
-        self.settings = settings
-        self.engine: Optional[AsyncEngine] = None
-        self.session_factory: Optional[async_sessionmaker] = None
-        self._is_initialized = False
-        self._lock = asyncio.Lock()
+        self.db_manager = db_manager
+        self.bot: Optional[Bot] = None
+        self.dp: Optional[Dispatcher] = None
+        self._is_running = False
 
-        # Configuration
-        self.database_url = self._build_database_url()
-        self.echo = settings.DB_ECHO
-        self.pool_size = settings.DB_POOL_SIZE
-        self.max_overflow = settings.DB_MAX_OVERFLOW
-        self.pool_timeout = settings.DB_POOL_TIMEOUT
-        self.pool_recycle = settings.DB_POOL_RECYCLE
+        logger.info("BotManager initialized")
 
-        logger.info(f"DatabaseManager initialized with URL: {self._mask_password(self.database_url)}")
-
-    def _build_database_url(self) -> str:
+    async def initialize(self) -> bool:
         """
-        Build database URL from settings.
-
-        Returns:
-            Database connection URL
-        """
-        db_type = self.settings.DB_TYPE.lower()
-
-        if db_type == "postgresql":
-            return (
-                f"postgresql+asyncpg://{self.settings.DB_USER}:{self.settings.DB_PASSWORD}"
-                f"@{self.settings.DB_HOST}:{self.settings.DB_PORT}/{self.settings.DB_NAME}"
-            )
-        elif db_type == "sqlite":
-            return f"sqlite+aiosqlite:///{self.settings.DB_NAME}.db"
-        else:
-            raise ValueError(f"Unsupported database type: {db_type}")
-
-    @staticmethod
-    def _mask_password(url: str) -> str:
-        """
-        Mask password in database URL for logging.
-
-        Args:
-            url: Database URL
-
-        Returns:
-            Masked URL
-        """
-        if "://" not in url:
-            return url
-
-        protocol, rest = url.split("://", 1)
-        if "@" not in rest:
-            return url
-
-        credentials, host_part = rest.split("@", 1)
-        if ":" in credentials:
-            user, _ = credentials.split(":", 1)
-            return f"{protocol}://{user}:****@{host_part}"
-
-        return url
-
-    async def initialize(self) -> None:
-        """
-        Initialize database engine and session factory.
-        Creates all tables if they don't exist.
-        """
-        async with self._lock:
-            if self._is_initialized:
-                logger.warning("Database already initialized")
-                return
-
-            try:
-                # Create async engine
-                self.engine = create_async_engine(
-                    self.database_url,
-                    echo=self.echo,
-                    poolclass=QueuePool,
-                    pool_size=self.pool_size,
-                    max_overflow=self.max_overflow,
-                    pool_timeout=self.pool_timeout,
-                    pool_recycle=self.pool_recycle,
-                    pool_pre_ping=True,  # Enable connection health checks
-                )
-
-                # Register event listeners
-                self._register_event_listeners()
-
-                # Create session factory
-                self.session_factory = async_sessionmaker(
-                    self.engine,
-                    class_=AsyncSession,
-                    expire_on_commit=False,
-                    autoflush=False,
-                    autocommit=False
-                )
-
-                # Create all tables
-                await self.create_tables()
-
-                self._is_initialized = True
-                logger.info("Database initialized successfully")
-
-            except Exception as e:
-                logger.error(f"Failed to initialize database: {e}", exc_info=True)
-                raise
-
-    def _register_event_listeners(self) -> None:
-        """Register SQLAlchemy event listeners for connection management."""
-        
-        @event.listens_for(self.engine.sync_engine, "connect")
-        def receive_connect(dbapi_conn, connection_record):
-            """Handle new database connections."""
-            logger.debug("New database connection established")
-
-        @event.listens_for(self.engine.sync_engine, "checkout")
-        def receive_checkout(dbapi_conn, connection_record, connection_proxy):
-            """Handle connection checkout from pool."""
-            logger.debug("Connection checked out from pool")
-
-        @event.listens_for(self.engine.sync_engine, "checkin")
-        def receive_checkin(dbapi_conn, connection_record):
-            """Handle connection checkin to pool."""
-            logger.debug("Connection returned to pool")
-
-    async def create_tables(self) -> None:
-        """
-        Create all database tables.
-        """
-        try:
-            async with self.engine.begin() as conn:
-                await conn.run_sync(Base.metadata.create_all)
-            logger.info("Database tables created successfully")
-        except Exception as e:
-            logger.error(f"Failed to create tables: {e}", exc_info=True)
-            raise
-
-    async def drop_tables(self) -> None:
-        """
-        Drop all database tables.
-        WARNING: This will delete all data!
-        """
-        try:
-            async with self.engine.begin() as conn:
-                await conn.run_sync(Base.metadata.drop_all)
-            logger.warning("All database tables dropped")
-        except Exception as e:
-            logger.error(f"Failed to drop tables: {e}", exc_info=True)
-            raise
-
-    @asynccontextmanager
-    async def session(self) -> AsyncGenerator[AsyncSession, None]:
-        """
-        Provide a transactional scope for database operations.
-
-        Yields:
-            AsyncSession instance
-
-        Example:
-            async with db_manager.session() as session:
-                user = await session.get(User, user_id)
-        """
-        if not self._is_initialized:
-            await self.initialize()
-
-        session = self.session_factory()
-        try:
-            yield session
-            await session.commit()
-        except Exception as e:
-            await session.rollback()
-            logger.error(f"Session error: {e}", exc_info=True)
-            raise
-        finally:
-            await session.close()
-
-    async def execute_raw(self, query: str, params: Optional[Dict[str, Any]] = None) -> Any:
-        """
-        Execute raw SQL query.
-
-        Args:
-            query: SQL query string
-            params: Query parameters
-
-        Returns:
-            Query result
-        """
-        async with self.session() as session:
-            result = await session.execute(text(query), params or {})
-            return result
-
-    async def check_connection(self) -> bool:
-        """
-        Check if database connection is alive.
-
-        Returns:
-            True if connection is alive, False otherwise
-        """
-        try:
-            async with self.session() as session:
-                await session.execute(text("SELECT 1"))
-            return True
-        except Exception as e:
-            logger.error(f"Database connection check failed: {e}")
-            return False
-
-    async def get_database_info(self) -> Dict[str, Any]:
-        """
-        Get database information and statistics.
-
-        Returns:
-            Dictionary with database info
-        """
-        try:
-            async with self.session() as session:
-                # Get table counts
-                user_count = await session.scalar(select(func.count(User.id)))
-                link_count = await session.scalar(select(func.count(MonitoredLink.id)))
-                log_count = await session.scalar(select(func.count(PingLog.id)))
-                alert_count = await session.scalar(select(func.count(Alert.id)))
-
-                return {
-                    "status": "connected",
-                    "database_url": self._mask_password(self.database_url),
-                    "pool_size": self.pool_size,
-                    "users": user_count,
-                    "links": link_count,
-                    "logs": log_count,
-                    "alerts": alert_count,
-                    "checked_at": datetime.utcnow().isoformat()
-                }
-        except Exception as e:
-            logger.error(f"Failed to get database info: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-                "checked_at": datetime.utcnow().isoformat()
-            }
-
-    async def cleanup_old_logs(self, days: int = 30) -> int:
-        """
-        Delete old log entries to save space.
-
-        Args:
-            days: Number of days to retain
-
-        Returns:
-            Number of deleted records
-        """
-        try:
-            cutoff_date = datetime.utcnow() - timedelta(days=days)
-            
-            async with self.session() as session:
-                # Delete old ping logs
-                result = await session.execute(
-                    delete(PingLog).where(PingLog.created_at < cutoff_date)
-                )
-                deleted_count = result.rowcount
-                
-                # Delete old user logs
-                result = await session.execute(
-                    delete(UserLog).where(UserLog.created_at < cutoff_date)
-                )
-                deleted_count += result.rowcount
-                
-                await session.commit()
-                
-                logger.info(f"Cleaned up {deleted_count} old log entries")
-                return deleted_count
-
-        except Exception as e:
-            logger.error(f"Failed to cleanup old logs: {e}")
-            return 0
-
-    async def backup_database(self, backup_path: str) -> bool:
-        """
-        Create database backup.
-
-        Args:
-            backup_path: Path to save backup
+        Initialize bot and dispatcher.
 
         Returns:
             True if successful, False otherwise
         """
         try:
-            # This is a placeholder - actual implementation depends on database type
-            logger.info(f"Creating database backup to {backup_path}")
-            # Implementation would use pg_dump for PostgreSQL or similar
+            logger.info("Initializing bot...")
+
+            # Create bot instance
+            self.bot = Bot(
+                token=settings.BOT_TOKEN,
+                default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+            )
+
+            # Create dispatcher with memory storage
+            storage = MemoryStorage()
+            self.dp = Dispatcher(storage=storage)
+
+            # Register routers
+            self.dp.include_router(router)
+            self.dp.include_router(admin_router)
+
+            # Register middleware to inject db_manager
+            @self.dp.message.middleware()
+            async def db_middleware(handler, event, data):
+                data['db_manager'] = self.db_manager
+                data['bot'] = self.bot
+                return await handler(event, data)
+
+            @self.dp.callback_query.middleware()
+            async def db_callback_middleware(handler, event, data):
+                data['db_manager'] = self.db_manager
+                data['bot'] = self.bot
+                return await handler(event, data)
+
+            # Set bot commands
+            await self._set_bot_commands()
+
+            logger.info("✓ Bot initialized successfully")
             return True
+
         except Exception as e:
-            logger.error(f"Failed to backup database: {e}")
+            logger.error(f"Failed to initialize bot: {e}", exc_info=True)
             return False
 
-    async def close(self) -> None:
-        """
-        Close database connections and cleanup resources.
-        """
-        if self.engine:
-            await self.engine.dispose()
-            logger.info("Database connections closed")
-            self._is_initialized = False
+    async def _set_bot_commands(self):
+        """Set bot commands for menu."""
+        from aiogram.types import BotCommand
 
+        commands = [
+            BotCommand(command="start", description="Start the bot"),
+            BotCommand(command="help", description="Show help"),
+            BotCommand(command="add", description="Add new link"),
+            BotCommand(command="list", description="Show all links"),
+            BotCommand(command="stats", description="Show statistics"),
+            BotCommand(command="settings", description="Bot settings"),
+        ]
 
-# ============================================================================
-# DATABASE REPOSITORY BASE CLASS
-# ============================================================================
+        # Add admin commands for admin users
+        admin_commands = commands + [
+            BotCommand(command="admin", description="Admin panel"),
+            BotCommand(command="broadcast", description="Broadcast message"),
+            BotCommand(command="users", description="List all users"),
+            BotCommand(command="system", description="System status"),
+        ]
 
-class BaseRepository:
-    """
-    Base repository class for database operations.
-    Provides common CRUD operations.
-    """
-
-    def __init__(self, db_manager: DatabaseManager):
-        """
-        Initialize repository.
-
-        Args:
-            db_manager: DatabaseManager instance
-        """
-        self.db = db_manager
-        self.logger = get_logger(self.__class__.__name__)
-
-    async def get_by_id(self, model_class, record_id: int):
-        """
-        Get record by ID.
-
-        Args:
-            model_class: SQLAlchemy model class
-            record_id: Record ID
-
-        Returns:
-            Model instance or None
-        """
         try:
-            async with self.db.session() as session:
-                result = await session.get(model_class, record_id)
-                return result
-        except Exception as e:
-            self.logger.error(f"Error getting {model_class.__name__} by ID {record_id}: {e}")
-            return None
-
-    async def get_all(self, model_class, limit: Optional[int] = None, offset: int = 0):
-        """
-        Get all records.
-
-        Args:
-            model_class: SQLAlchemy model class
-            limit: Maximum number of records
-            offset: Number of records to skip
-
-        Returns:
-            List of model instances
-        """
-        try:
-            async with self.db.session() as session:
-                query = select(model_class).offset(offset)
-                if limit:
-                    query = query.limit(limit)
-                
-                result = await session.execute(query)
-                return result.scalars().all()
-        except Exception as e:
-            self.logger.error(f"Error getting all {model_class.__name__}: {e}")
-            return []
-
-    async def create(self, model_instance):
-        """
-        Create new record.
-
-        Args:
-            model_instance: Model instance to create
-
-        Returns:
-            Created model instance
-        """
-        try:
-            async with self.db.session() as session:
-                session.add(model_instance)
-                await session.commit()
-                await session.refresh(model_instance)
-                return model_instance
-        except Exception as e:
-            self.logger.error(f"Error creating {model_instance.__class__.__name__}: {e}")
-            raise
-
-    async def update(self, model_instance):
-        """
-        Update existing record.
-
-        Args:
-            model_instance: Model instance to update
-
-        Returns:
-            Updated model instance
-        """
-        try:
-            async with self.db.session() as session:
-                session.add(model_instance)
-                await session.commit()
-                await session.refresh(model_instance)
-                return model_instance
-        except Exception as e:
-            self.logger.error(f"Error updating {model_instance.__class__.__name__}: {e}")
-            raise
-
-    async def delete(self, model_instance):
-        """
-        Delete record.
-
-        Args:
-            model_instance: Model instance to delete
-
-        Returns:
-            True if successful
-        """
-        try:
-            async with self.db.session() as session:
-                await session.delete(model_instance)
-                await session.commit()
-                return True
-        except Exception as e:
-            self.logger.error(f"Error deleting {model_instance.__class__.__name__}: {e}")
-            return False
-
-    async def count(self, model_class) -> int:
-        """
-        Count total records.
-
-        Args:
-            model_class: SQLAlchemy model class
-
-        Returns:
-            Total count
-        """
-        try:
-            async with self.db.session() as session:
-                result = await session.execute(
-                    select(func.count(model_class.id))
+            # Set default commands
+            await self.bot.set_my_commands(commands)
+            
+            # Set admin commands for owner
+            from aiogram.types import BotCommandScopeChat
+            for admin_id in settings.admin_list:
+                await self.bot.set_my_commands(
+                    admin_commands,
+                    scope=BotCommandScopeChat(chat_id=admin_id)
                 )
-                return result.scalar()
+
+            logger.info("Bot commands set successfully")
+
         except Exception as e:
-            self.logger.error(f"Error counting {model_class.__name__}: {e}")
-            return 0
+            logger.error(f"Error setting bot commands: {e}")
 
-
-# ============================================================================
-# USER REPOSITORY
-# ============================================================================
-
-class UserRepository(BaseRepository):
-    """Repository for User model operations."""
-
-    async def get_by_user_id(self, user_id: int) -> Optional[User]:
-        """Get user by Telegram user ID."""
+    async def start_polling(self):
+        """Start bot in polling mode."""
         try:
-            async with self.db.session() as session:
-                result = await session.execute(
-                    select(User).where(User.user_id == user_id)
-                )
-                return result.scalar_one_or_none()
+            if not self.bot or not self.dp:
+                logger.error("Bot not initialized")
+                return
+
+            logger.info("Starting bot polling...")
+            self._is_running = True
+
+            # Delete webhook if exists
+            await self.bot.delete_webhook(drop_pending_updates=True)
+
+            # Start polling
+            await self.dp.start_polling(
+                self.bot,
+                allowed_updates=self.dp.resolve_used_update_types()
+            )
+
         except Exception as e:
-            self.logger.error(f"Error getting user by user_id {user_id}: {e}")
-            return None
+            logger.error(f"Error in polling: {e}", exc_info=True)
+        finally:
+            self._is_running = False
 
-    async def get_or_create(self, user_id: int, **kwargs) -> User:
-        """Get existing user or create new one."""
-        user = await self.get_by_user_id(user_id)
-        if user:
-            return user
+    async def start_webhook(self, webhook_url: str, webhook_path: str, port: int):
+        """
+        Start bot in webhook mode.
 
-        user = User(user_id=user_id, **kwargs)
-        return await self.create(user)
-
-    async def get_all_active(self) -> List[User]:
-        """Get all active users."""
+        Args:
+            webhook_url: Webhook URL
+            webhook_path: Webhook path
+            port: Port to listen on
+        """
         try:
-            async with self.db.session() as session:
-                result = await session.execute(
-                    select(User).where(
-                        and_(
-                            User.status == "active",
-                            User.is_deleted == False
-                        )
-                    )
-                )
-                return result.scalars().all()
+            if not self.bot or not self.dp:
+                logger.error("Bot not initialized")
+                return
+
+            logger.info(f"Starting bot webhook on {webhook_url}")
+            self._is_running = True
+
+            # Set webhook
+            await self.bot.set_webhook(
+                url=webhook_url,
+                drop_pending_updates=True
+            )
+
+            # Start webhook
+            from aiohttp import web
+
+            app = web.Application()
+            
+            # Setup webhook handler
+            from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+            
+            webhook_requests_handler = SimpleRequestHandler(
+                dispatcher=self.dp,
+                bot=self.bot
+            )
+            webhook_requests_handler.register(app, path=webhook_path)
+            setup_application(app, self.dp, bot=self.bot)
+
+            # Run web app
+            runner = web.AppRunner(app)
+            await runner.setup()
+            
+            site = web.TCPSite(runner, '0.0.0.0', port)
+            await site.start()
+
+            logger.info(f"✓ Webhook started on port {port}")
+
+            # Keep running
+            while self._is_running:
+                await asyncio.sleep(1)
+
         except Exception as e:
-            self.logger.error(f"Error getting active users: {e}")
-            return []
+            logger.error(f"Error in webhook: {e}", exc_info=True)
+        finally:
+            self._is_running = False
 
-    async def get_admins(self) -> List[User]:
-        """Get all admin users."""
+    async def stop(self):
+        """Stop the bot gracefully."""
         try:
-            async with self.db.session() as session:
-                result = await session.execute(
-                    select(User).where(
-                        User.role.in_(["owner", "admin"])
-                    )
-                )
-                return result.scalars().all()
-        except Exception as e:
-            self.logger.error(f"Error getting admin users: {e}")
-            return []
+            logger.info("Stopping bot...")
+            self._is_running = False
 
-    async def update_activity(self, user_id: int, command: Optional[str] = None) -> bool:
-        """Update user's last activity."""
-        try:
-            user = await self.get_by_user_id(user_id)
-            if user:
-                user.update_activity(command)
-                await self.update(user)
-                return True
-            return False
-        except Exception as e:
-            self.logger.error(f"Error updating user activity: {e}")
-            return False
-
-
-# ============================================================================
-# LINK REPOSITORY
-# ============================================================================
-
-class LinkRepository(BaseRepository):
-    """Repository for MonitoredLink model operations."""
-
-    async def get_user_links(self, user_id: int, active_only: bool = False) -> List[MonitoredLink]:
-        """Get all links for a user."""
-        try:
-            async with self.db.session() as session:
-                query = select(MonitoredLink).join(User).where(User.user_id == user_id)
+            if self.bot:
+                # Delete webhook
+                await self.bot.delete_webhook()
                 
-                if active_only:
-                    query = query.where(
-                        and_(
-                            MonitoredLink.is_active == True,
-                            MonitoredLink.is_deleted == False
-                        )
-                    )
-                
-                result = await session.execute(query)
-                return result.scalars().all()
-        except Exception as e:
-            self.logger.error(f"Error getting user links: {e}")
-            return []
+                # Close bot session
+                await self.bot.session.close()
 
-    async def get_links_to_check(self, limit: Optional[int] = None) -> List[MonitoredLink]:
-        """Get links that need to be checked."""
-        try:
-            async with self.db.session() as session:
-                query = select(MonitoredLink).where(
-                    and_(
-                        MonitoredLink.is_active == True,
-                        MonitoredLink.is_deleted == False,
-                        or_(
-                            MonitoredLink.next_check <= datetime.utcnow(),
-                            MonitoredLink.next_check.is_(None)
-                        )
-                    )
-                ).order_by(MonitoredLink.next_check.asc())
-                
-                if limit:
-                    query = query.limit(limit)
-                
-                result = await session.execute(query)
-                return result.scalars().all()
-        except Exception as e:
-            self.logger.error(f"Error getting links to check: {e}")
-            return []
+            if self.dp:
+                await self.dp.storage.close()
 
-    async def count_user_links(self, user_id: int) -> int:
-        """Count total links for a user."""
-        try:
-            async with self.db.session() as session:
-                result = await session.execute(
-                    select(func.count(MonitoredLink.id))
-                    .join(User)
-                    .where(
-                        and_(
-                            User.user_id == user_id,
-                            MonitoredLink.is_deleted == False
-                        )
-                    )
-                )
-                return result.scalar()
+            logger.info("✓ Bot stopped successfully")
+
         except Exception as e:
-            self.logger.error(f"Error counting user links: {e}")
-            return 0
+            logger.error(f"Error stopping bot: {e}")
+
+    @property
+    def is_running(self) -> bool:
+        """Check if bot is running."""
+        return self._is_running
 
 
 # ============================================================================
-# END OF DATABASE MANAGER MODULE
+# END OF BOT MANAGER MODULE
 # ============================================================================

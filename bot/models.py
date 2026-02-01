@@ -22,7 +22,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship, declarative_base, declared_attr
 from sqlalchemy.ext.hybrid import hybrid_property, hybrid_method
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, JSON, ARRAY
 import uuid
 
 
@@ -216,8 +216,8 @@ class User(Base, TimestampMixin, SoftDeleteMixin):
     min_ping_interval = Column(Integer, default=300, nullable=False)
     
     # User Settings (JSON)
-    settings = Column(JSONB, default=dict, nullable=False)
-    preferences = Column(JSONB, default=dict, nullable=False)
+    settings = Column(JSON, default=dict, nullable=False)
+    preferences = Column(JSON, default=dict, nullable=False)
     
     # Notification Settings
     notifications_enabled = Column(Boolean, default=True, nullable=False)
@@ -420,7 +420,7 @@ class MonitoredLink(Base, TimestampMixin, SoftDeleteMixin):
     slow_threshold = Column(Float, default=5.0, nullable=False)
     
     # Custom Headers & Body
-    custom_headers = Column(JSONB, default=dict, nullable=False)
+    custom_headers = Column(JSON, default=dict, nullable=False)
     request_body = Column(Text, nullable=True)
     
     # Expected Response
@@ -436,7 +436,7 @@ class MonitoredLink(Base, TimestampMixin, SoftDeleteMixin):
     first_check_at = Column(DateTime(timezone=True), nullable=True)
     
     # Metadata
-    metadata = Column(JSONB, default=dict, nullable=False)
+    extra_info = Column(JSON, default=dict, nullable=False)
     tags = Column(ARRAY(String), default=list, nullable=False)
     
     # Relationships
@@ -605,10 +605,10 @@ class PingLog(Base, TimestampMixin):
     
     # Request Details
     request_method = Column(String(10), nullable=True)
-    request_headers = Column(JSONB, default=dict, nullable=False)
+    request_headers = Column(JSON, default=dict, nullable=False)
     
     # Response Details
-    response_headers = Column(JSONB, default=dict, nullable=False)
+    response_headers = Column(JSON, default=dict, nullable=False)
     response_body = Column(Text, nullable=True)
     
     # Network Details
@@ -624,7 +624,7 @@ class PingLog(Base, TimestampMixin):
     retry_count = Column(Integer, default=0, nullable=False)
     
     # Metadata
-    metadata = Column(JSONB, default=dict, nullable=False)
+    extra_info = Column(JSON, default=dict, nullable=False)
     
     # Relationships
     link = relationship("MonitoredLink", back_populates="ping_logs")
@@ -703,7 +703,7 @@ class Alert(Base, TimestampMixin):
     max_retries = Column(Integer, default=3, nullable=False)
     
     # Metadata
-    metadata = Column(JSONB, default=dict, nullable=False)
+    extra_info = Column(JSON, default=dict, nullable=False)
     
     # Relationships
     user = relationship("User", back_populates="alerts")
@@ -773,7 +773,7 @@ class UserLog(Base, TimestampMixin):
     
     # Request Information
     command = Column(String(100), nullable=True)
-    parameters = Column(JSONB, default=dict, nullable=False)
+    parameters = Column(JSON, default=dict, nullable=False)
     
     # Result
     success = Column(Boolean, default=True, nullable=False)
@@ -782,7 +782,7 @@ class UserLog(Base, TimestampMixin):
     # Metadata
     ip_address = Column(String(45), nullable=True)
     user_agent = Column(Text, nullable=True)
-    metadata = Column(JSONB, default=dict, nullable=False)
+    extra_info = Column(JSON, default=dict, nullable=False)
     
     # Relationships
     user = relationship("User", back_populates="logs")
@@ -850,7 +850,7 @@ class Statistics(Base, TimestampMixin):
     disk_usage = Column(Float, nullable=True)
     
     # Metadata
-    metadata = Column(JSONB, default=dict, nullable=False)
+    extra_info = Column(JSON, default=dict, nullable=False)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert statistics to dictionary"""
