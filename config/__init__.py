@@ -10,17 +10,6 @@ License: MIT
 ============================================================================
 """
 
-from bot.manager import BotManager
-from bot.handlers import router, Keyboards, BotHelpers
-from bot.admin_handlers import admin_router, AdminKeyboards, AdminHelpers
+from config.settings import get_settings, Settings
 
-
-__all__ = [
-    "BotManager",
-    "router",
-    "admin_router",
-    "Keyboards",
-    "BotHelpers",
-    "AdminKeyboards",
-    "AdminHelpers",
-]
+__all__ = ["get_settings", "Settings"]
