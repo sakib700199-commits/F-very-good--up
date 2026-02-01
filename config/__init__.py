@@ -1,64 +1,26 @@
 """
-Configuration Package for Uptime Bot
+============================================================================
+TELEGRAM UPTIME BOT - BOT PACKAGE
+============================================================================
+Bot handlers and management.
 
-This package contains all configuration-related modules including:
-- Settings management with environment variable support
-- Constants and enums used throughout the application
-- Feature flags and runtime configuration
+Author: Professional Development Team
+Version: 1.0.0
+License: MIT
+============================================================================
 """
 
-from config.settings import (
-    Settings,
-    DatabaseSettings,
-    BotSettings,
-    MonitoringSettings,
-    LoggingSettings,
-    CacheSettings,
-    SecuritySettings,
-    get_settings,
-    settings
-)
+from bot.manager import BotManager
+from bot.handlers import router, Keyboards, BotHelpers
+from bot.admin_handlers import admin_router, AdminKeyboards, AdminHelpers
 
-from config.constants import (
-    BotCommands,
-    UserRoles,
-    LinkStatus,
-    PingStatus,
-    NotificationType,
-    TimeIntervals,
-    HTTPMethods,
-    StatusCodes,
-    MessageTemplates,
-    Limits,
-    Defaults,
-    CacheKeys,
-    CallbackPrefixes
-)
 
 __all__ = [
-    # Settings
-    "Settings",
-    "DatabaseSettings",
-    "BotSettings",
-    "MonitoringSettings",
-    "LoggingSettings",
-    "CacheSettings",
-    "SecuritySettings",
-    "get_settings",
-    "settings",
-    
-    # Constants
-    "BotCommands",
-    "UserRoles",
-    "LinkStatus",
-    "PingStatus",
-    "NotificationType",
-    "TimeIntervals",
-    "HTTPMethods",
-    "StatusCodes",
-    "MessageTemplates",
-    "Limits",
-    "Defaults",
-    "CacheKeys",
-    "CallbackPrefixes"
+    "BotManager",
+    "router",
+    "admin_router",
+    "Keyboards",
+    "BotHelpers",
+    "AdminKeyboards",
+    "AdminHelpers",
 ]

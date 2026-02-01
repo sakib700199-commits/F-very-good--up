@@ -1,1150 +1,463 @@
 """
-Settings Module for Uptime Bot
+============================================================================
+TELEGRAM UPTIME BOT - SETTINGS CONFIGURATION
+============================================================================
+Comprehensive settings management using Pydantic for validation.
 
-Comprehensive configuration management using Pydantic Settings.
-Supports environment variables, .env files, and runtime configuration.
-Includes validation, type checking, and sensible defaults.
+Author: Professional Development Team
+Version: 1.0.0
+License: MIT
+============================================================================
 """
 
-from __future__ import annotations
-
 import os
-import secrets
-from functools import lru_cache
+from typing import List, Optional, Dict, Any
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
-from enum import Enum
+from functools import lru_cache
 
-from pydantic import (
-    Field,
-    SecretStr,
-    field_validator,
-    model_validator,
-    AnyHttpUrl,
-    PostgresDsn,
-    RedisDsn,
-    EmailStr
-)
+from pydantic import Field, field_validator, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Environment(str, Enum):
-    """Application environment enumeration."""
-    DEVELOPMENT = "development"
-    STAGING = "staging"
-    PRODUCTION = "production"
-    TESTING = "testing"
+# ============================================================================
+# BASE SETTINGS CLASS
+# ============================================================================
 
+class Settings(BaseSettings):
+    """
+    Application settings with comprehensive configuration options.
+    All settings can be overridden via environment variables.
+    """
 
-class LogLevel(str, Enum):
-    """Logging level enumeration."""
-    DEBUG = "DEBUG"
-    INFO = "INFO"
-    WARNING = "WARNING"
-    ERROR = "ERROR"
-    CRITICAL = "CRITICAL"
-
-
-class DatabaseType(str, Enum):
-    """Supported database types."""
-    POSTGRESQL = "postgresql"
-    SQLITE = "sqlite"
-    MYSQL = "mysql"
-
-
-class BaseSettingsConfig(BaseSettings):
-    """Base configuration class with common settings."""
-    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-        validate_default=True
+        case_sensitive=True,
+        extra="ignore"
     )
 
+    # ========================================================================
+    # TELEGRAM BOT CONFIGURATION
+    # ========================================================================
+    
+    BOT_TOKEN: str = Field(..., description="Telegram bot token from BotFather")
+    BOT_USERNAME: Optional[str] = Field(None, description="Bot username")
+    BOT_NAME: str = Field(default="UptimeBot", description="Bot display name")
+    BOT_VERSION: str = Field(default="1.0.0", description="Bot version")
+    BOT_DESCRIPTION: str = Field(
+        default="Professional Uptime Monitoring Bot",
+        description="Bot description"
+    )
+    
+    # Admin Configuration
+    OWNER_ID: int = Field(..., description="Bot owner Telegram user ID")
+    ADMIN_IDS: str = Field(default="", description="Comma-separated admin user IDs")
+    
+    # Bot Behavior
+    MAX_CONNECTIONS: int = Field(default=100, description="Maximum concurrent connections")
+    WEBHOOK_MODE: bool = Field(default=False, description="Enable webhook mode")
+    
+    @computed_field
+    @property
+    def admin_list(self) -> List[int]:
+        """Parse admin IDs from comma-separated string."""
+        if not self.ADMIN_IDS:
+            return [self.OWNER_ID]
+        
+        admin_ids = [self.OWNER_ID]
+        for admin_id in self.ADMIN_IDS.split(","):
+            try:
+                admin_ids.append(int(admin_id.strip()))
+            except ValueError:
+                continue
+        return list(set(admin_ids))
 
-class DatabaseSettings(BaseSettingsConfig):
-    """
-    Database Configuration Settings
+    # ========================================================================
+    # DATABASE CONFIGURATION
+    # ========================================================================
     
-    Supports PostgreSQL (production), SQLite (development), and MySQL.
-    Includes connection pooling, timeout, and SSL configuration.
-    """
+    # PostgreSQL Settings
+    DB_TYPE: str = Field(default="postgresql", description="Database type")
+    DB_HOST: str = Field(default="localhost", description="Database host")
+    DB_PORT: int = Field(default=5432, description="Database port")
+    DB_NAME: str = Field(default="uptime_bot", description="Database name")
+    DB_USER: str = Field(default="postgres", description="Database user")
+    DB_PASSWORD: str = Field(default="", description="Database password")
     
-    model_config = SettingsConfigDict(
-        env_prefix="DB_",
-        env_file=".env"
-    )
+    # Connection Pool Settings
+    DB_POOL_SIZE: int = Field(default=20, description="Database connection pool size")
+    DB_MAX_OVERFLOW: int = Field(default=10, description="Maximum pool overflow")
+    DB_POOL_TIMEOUT: int = Field(default=30, description="Pool timeout in seconds")
+    DB_POOL_RECYCLE: int = Field(default=3600, description="Connection recycle time")
+    DB_ECHO: bool = Field(default=False, description="Echo SQL queries")
     
-    # Database type and connection
-    type: DatabaseType = Field(
-        default=DatabaseType.SQLITE,
-        description="Database type: postgresql, sqlite, or mysql"
-    )
+    # MongoDB Settings (Alternative)
+    MONGO_URI: Optional[str] = Field(None, description="MongoDB connection URI")
+    MONGO_DB_NAME: str = Field(default="uptime_bot", description="MongoDB database name")
+    MONGO_COLLECTION_LINKS: str = Field(default="links", description="Links collection")
+    MONGO_COLLECTION_USERS: str = Field(default="users", description="Users collection")
+    MONGO_COLLECTION_LOGS: str = Field(default="logs", description="Logs collection")
     
-    # PostgreSQL / MySQL settings
-    host: str = Field(
-        default="localhost",
-        description="Database host address"
-    )
-    port: int = Field(
-        default=5432,
-        ge=1,
-        le=65535,
-        description="Database port number"
-    )
-    name: str = Field(
-        default="uptime_bot",
-        min_length=1,
-        max_length=64,
-        description="Database name"
-    )
-    user: str = Field(
-        default="postgres",
-        min_length=1,
-        max_length=64,
-        description="Database username"
-    )
-    password: SecretStr = Field(
-        default=SecretStr(""),
-        description="Database password"
-    )
+    # Redis Settings
+    REDIS_HOST: str = Field(default="localhost", description="Redis host")
+    REDIS_PORT: int = Field(default=6379, description="Redis port")
+    REDIS_DB: int = Field(default=0, description="Redis database number")
+    REDIS_PASSWORD: Optional[str] = Field(None, description="Redis password")
+    REDIS_SSL: bool = Field(default=False, description="Use SSL for Redis")
+    REDIS_CACHE_TTL: int = Field(default=3600, description="Cache TTL in seconds")
+
+    # ========================================================================
+    # MONITORING CONFIGURATION
+    # ========================================================================
     
-    # SQLite settings
-    sqlite_path: Path = Field(
-        default=Path("data/uptime_bot.db"),
-        description="Path to SQLite database file"
-    )
+    # Ping Settings
+    DEFAULT_PING_INTERVAL: int = Field(default=300, description="Default ping interval (seconds)")
+    MIN_PING_INTERVAL: int = Field(default=60, description="Minimum ping interval (seconds)")
+    MAX_PING_INTERVAL: int = Field(default=86400, description="Maximum ping interval (seconds)")
+    REQUEST_TIMEOUT: int = Field(default=30, description="HTTP request timeout (seconds)")
+    MAX_RETRIES: int = Field(default=3, description="Maximum retry attempts")
+    RETRY_DELAY: int = Field(default=5, description="Delay between retries (seconds)")
     
-    # Connection pool settings
-    pool_size: int = Field(
-        default=10,
-        ge=1,
-        le=100,
-        description="Connection pool size"
-    )
-    max_overflow: int = Field(
-        default=20,
-        ge=0,
-        le=100,
-        description="Maximum overflow connections"
-    )
-    pool_timeout: int = Field(
-        default=30,
-        ge=1,
-        le=300,
-        description="Pool connection timeout in seconds"
-    )
-    pool_recycle: int = Field(
-        default=1800,
-        ge=60,
-        le=7200,
-        description="Connection recycle time in seconds"
-    )
-    pool_pre_ping: bool = Field(
-        default=True,
-        description="Enable connection health check before use"
-    )
+    # Concurrent Monitoring
+    MAX_CONCURRENT_PINGS: int = Field(default=50, description="Maximum concurrent pings")
+    MONITOR_BATCH_SIZE: int = Field(default=100, description="Monitoring batch size")
+    MONITOR_WORKER_COUNT: int = Field(default=5, description="Number of monitor workers")
     
-    # Query settings
-    echo: bool = Field(
-        default=False,
-        description="Echo SQL queries (debug mode)"
-    )
-    echo_pool: bool = Field(
-        default=False,
-        description="Echo connection pool events"
-    )
-    
-    # SSL settings
-    ssl_enabled: bool = Field(
-        default=False,
-        description="Enable SSL for database connection"
-    )
-    ssl_ca_path: Optional[Path] = Field(
-        default=None,
-        description="Path to SSL CA certificate"
-    )
-    ssl_cert_path: Optional[Path] = Field(
-        default=None,
-        description="Path to SSL client certificate"
-    )
-    ssl_key_path: Optional[Path] = Field(
-        default=None,
-        description="Path to SSL client key"
-    )
-    
-    # Migration settings
-    auto_migrate: bool = Field(
-        default=True,
-        description="Automatically run migrations on startup"
-    )
-    migration_directory: Path = Field(
-        default=Path("migrations"),
-        description="Directory for database migrations"
-    )
-    
-    @property
-    def url(self) -> str:
-        """Generate database URL based on configuration."""
-        if self.type == DatabaseType.SQLITE:
-            # Ensure directory exists
-            self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-            return f"sqlite+aiosqlite:///{self.sqlite_path}"
-        
-        elif self.type == DatabaseType.POSTGRESQL:
-            password = self.password.get_secret_value()
-            return (
-                f"postgresql+asyncpg://{self.user}:{password}"
-                f"@{self.host}:{self.port}/{self.name}"
-            )
-        
-        elif self.type == DatabaseType.MYSQL:
-            password = self.password.get_secret_value()
-            return (
-                f"mysql+aiomysql://{self.user}:{password}"
-                f"@{self.host}:{self.port}/{self.name}"
-            )
-        
-        raise ValueError(f"Unsupported database type: {self.type}")
-    
-    @property
-    def sync_url(self) -> str:
-        """Generate synchronous database URL for migrations."""
-        if self.type == DatabaseType.SQLITE:
-            return f"sqlite:///{self.sqlite_path}"
-        
-        elif self.type == DatabaseType.POSTGRESQL:
-            password = self.password.get_secret_value()
-            return (
-                f"postgresql://{self.user}:{password}"
-                f"@{self.host}:{self.port}/{self.name}"
-            )
-        
-        elif self.type == DatabaseType.MYSQL:
-            password = self.password.get_secret_value()
-            return (
-                f"mysql://{self.user}:{password}"
-                f"@{self.host}:{self.port}/{self.name}"
-            )
-        
-        raise ValueError(f"Unsupported database type: {self.type}")
-    
-    @field_validator("sqlite_path")
+    # Health Check
+    HEALTH_CHECK_ENABLED: bool = Field(default=True, description="Enable health checks")
+    HEALTH_CHECK_INTERVAL: int = Field(default=60, description="Health check interval")
+    HEALTH_CHECK_TIMEOUT: int = Field(default=10, description="Health check timeout")
+
+    @field_validator("DEFAULT_PING_INTERVAL", "MIN_PING_INTERVAL", "MAX_PING_INTERVAL")
     @classmethod
-    def validate_sqlite_path(cls, v: Path) -> Path:
-        """Validate and normalize SQLite path."""
-        if not v.suffix:
-            v = v.with_suffix(".db")
+    def validate_intervals(cls, v: int) -> int:
+        """Validate ping intervals are positive."""
+        if v <= 0:
+            raise ValueError("Interval must be positive")
         return v
-    
-    @model_validator(mode="after")
-    def validate_ssl_settings(self) -> "DatabaseSettings":
-        """Validate SSL settings consistency."""
-        if self.ssl_enabled:
-            if self.type == DatabaseType.SQLITE:
-                raise ValueError("SSL is not supported for SQLite databases")
-            
-            if self.ssl_ca_path and not self.ssl_ca_path.exists():
-                raise ValueError(f"SSL CA file not found: {self.ssl_ca_path}")
-        
-        return self
 
+    # ========================================================================
+    # SELF-PING CONFIGURATION (RENDER)
+    # ========================================================================
+    
+    SELF_PING_ENABLED: bool = Field(default=True, description="Enable self-ping")
+    SELF_PING_URL: Optional[str] = Field(None, description="Self-ping URL")
+    SELF_PING_INTERVAL: int = Field(default=300, description="Self-ping interval (seconds)")
+    SELF_PING_METHOD: str = Field(default="GET", description="Self-ping HTTP method")
+    SELF_PING_TIMEOUT: int = Field(default=15, description="Self-ping timeout")
+    SELF_PING_RETRY_COUNT: int = Field(default=3, description="Self-ping retry count")
 
-class BotSettings(BaseSettingsConfig):
-    """
-    Telegram Bot Configuration Settings
+    # ========================================================================
+    # NOTIFICATION SETTINGS
+    # ========================================================================
     
-    Contains all bot-related settings including token, admin IDs,
-    rate limiting, and feature toggles.
-    """
+    # Alert Configuration
+    ENABLE_DOWNTIME_ALERTS: bool = Field(default=True, description="Enable downtime alerts")
+    ENABLE_RECOVERY_ALERTS: bool = Field(default=True, description="Enable recovery alerts")
+    ALERT_COOLDOWN: int = Field(default=900, description="Alert cooldown period (seconds)")
+    MAX_ALERTS_PER_HOUR: int = Field(default=10, description="Maximum alerts per hour")
+    ALERT_RETRY_COUNT: int = Field(default=3, description="Alert retry count")
     
-    model_config = SettingsConfigDict(
-        env_prefix="BOT_",
-        env_file=".env"
-    )
+    # Notification Channels
+    ALERT_CHANNEL_ID: Optional[int] = Field(None, description="Alert channel ID")
+    BROADCAST_CHANNEL_ID: Optional[int] = Field(None, description="Broadcast channel ID")
+    LOG_CHANNEL_ID: Optional[int] = Field(None, description="Log channel ID")
+
+    # ========================================================================
+    # LOGGING CONFIGURATION
+    # ========================================================================
     
-    # Core bot settings
-    token: SecretStr = Field(
-        ...,  # Required
-        description="Telegram Bot API token from @BotFather"
-    )
+    LOG_LEVEL: str = Field(default="INFO", description="Logging level")
+    LOG_FORMAT: str = Field(default="json", description="Log format (json/text)")
+    LOG_TO_FILE: bool = Field(default=True, description="Enable file logging")
+    LOG_FILE_PATH: str = Field(default="logs/uptime_bot.log", description="Log file path")
+    LOG_FILE_MAX_SIZE: int = Field(default=10485760, description="Max log file size (bytes)")
+    LOG_FILE_BACKUP_COUNT: int = Field(default=5, description="Number of backup logs")
+    LOG_TO_CONSOLE: bool = Field(default=True, description="Enable console logging")
+    LOG_COLORIZE: bool = Field(default=True, description="Colorize console logs")
     
-    # Admin configuration
-    owner_id: int = Field(
-        ...,  # Required
-        description="Telegram user ID of the bot owner"
-    )
-    admin_ids: Set[int] = Field(
-        default_factory=set,
-        description="Set of admin user IDs"
-    )
-    
-    # Bot information
-    name: str = Field(
-        default="Uptime Bot",
-        min_length=1,
-        max_length=64,
-        description="Bot display name"
-    )
-    username: Optional[str] = Field(
-        default=None,
-        description="Bot username (without @)"
-    )
-    version: str = Field(
-        default="1.0.0",
-        description="Bot version string"
-    )
-    
-    # Rate limiting
-    rate_limit_enabled: bool = Field(
-        default=True,
-        description="Enable rate limiting for commands"
-    )
-    rate_limit_window: int = Field(
-        default=60,
-        ge=1,
-        le=3600,
-        description="Rate limit window in seconds"
-    )
-    rate_limit_max_requests: int = Field(
-        default=30,
-        ge=1,
-        le=1000,
-        description="Maximum requests per window"
-    )
-    
-    # Message settings
-    parse_mode: str = Field(
-        default="HTML",
-        description="Default message parse mode (HTML, Markdown, MarkdownV2)"
-    )
-    disable_web_page_preview: bool = Field(
-        default=True,
-        description="Disable link previews in messages"
-    )
-    
-    # Webhook settings (for production)
-    use_webhook: bool = Field(
-        default=False,
-        description="Use webhook instead of polling"
-    )
-    webhook_host: Optional[str] = Field(
-        default=None,
-        description="Webhook host URL"
-    )
-    webhook_path: str = Field(
-        default="/webhook",
-        description="Webhook URL path"
-    )
-    webhook_port: int = Field(
-        default=8443,
-        ge=1,
-        le=65535,
-        description="Webhook server port"
-    )
-    webhook_secret: Optional[SecretStr] = Field(
-        default=None,
-        description="Webhook secret token for verification"
-    )
-    
-    # Polling settings (for development)
-    polling_timeout: int = Field(
-        default=30,
-        ge=1,
-        le=60,
-        description="Long polling timeout in seconds"
-    )
-    polling_allowed_updates: List[str] = Field(
-        default_factory=lambda: [
-            "message",
-            "callback_query",
-            "inline_query",
-            "chat_member"
-        ],
-        description="Allowed update types for polling"
-    )
-    
-    # Feature toggles
-    enable_inline_mode: bool = Field(
-        default=False,
-        description="Enable inline query mode"
-    )
-    enable_group_mode: bool = Field(
-        default=True,
-        description="Allow bot usage in groups"
-    )
-    enable_channel_mode: bool = Field(
-        default=False,
-        description="Allow bot usage in channels"
-    )
-    maintenance_mode: bool = Field(
-        default=False,
-        description="Enable maintenance mode (blocks non-admin users)"
-    )
-    
-    # Limits
-    max_links_per_user: int = Field(
-        default=0,  # 0 = unlimited
-        ge=0,
-        description="Maximum links per user (0 = unlimited)"
-    )
-    max_links_premium: int = Field(
-        default=0,  # 0 = unlimited
-        ge=0,
-        description="Maximum links for premium users (0 = unlimited)"
-    )
-    
-    @field_validator("token")
+    # Database Logging
+    DB_LOG_ENABLED: bool = Field(default=True, description="Enable database logging")
+    DB_LOG_RETENTION_DAYS: int = Field(default=30, description="Log retention days")
+    DB_LOG_BATCH_SIZE: int = Field(default=100, description="Log batch size")
+
+    @field_validator("LOG_LEVEL")
     @classmethod
-    def validate_token(cls, v: SecretStr) -> SecretStr:
-        """Validate Telegram bot token format."""
-        token = v.get_secret_value()
-        
-        if not token:
-            raise ValueError("Bot token cannot be empty")
-        
-        parts = token.split(":")
-        if len(parts) != 2:
-            raise ValueError("Invalid bot token format")
-        
-        try:
-            int(parts[0])
-        except ValueError:
-            raise ValueError("Invalid bot token format: ID must be numeric")
-        
-        if len(parts[1]) < 30:
-            raise ValueError("Invalid bot token format: Token too short")
-        
+    def validate_log_level(cls, v: str) -> str:
+        """Validate log level."""
+        valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        v = v.upper()
+        if v not in valid_levels:
+            raise ValueError(f"Invalid log level. Must be one of: {valid_levels}")
         return v
+
+    # ========================================================================
+    # SECURITY & RATE LIMITING
+    # ========================================================================
     
-    @field_validator("admin_ids", mode="before")
-    @classmethod
-    def parse_admin_ids(cls, v: Any) -> Set[int]:
-        """Parse admin IDs from string or list."""
-        if isinstance(v, str):
-            if not v.strip():
-                return set()
-            return {int(x.strip()) for x in v.split(",") if x.strip()}
-        
-        if isinstance(v, (list, set, tuple)):
-            return {int(x) for x in v}
-        
-        return set()
+    # Rate Limiting
+    RATE_LIMIT_ENABLED: bool = Field(default=True, description="Enable rate limiting")
+    RATE_LIMIT_PER_USER: int = Field(default=30, description="Rate limit per user")
+    RATE_LIMIT_WINDOW: int = Field(default=60, description="Rate limit window (seconds)")
+    RATE_LIMIT_STORAGE: str = Field(default="redis", description="Rate limit storage")
     
+    # Security
+    SECRET_KEY: str = Field(
+        default="change_this_secret_key_in_production",
+        description="Secret key for encryption"
+    )
+    ENCRYPTION_KEY: str = Field(
+        default="change_this_encryption_key",
+        description="Encryption key"
+    )
+    JWT_SECRET: str = Field(default="jwt_secret_key", description="JWT secret")
+    JWT_EXPIRATION: int = Field(default=86400, description="JWT expiration (seconds)")
+    
+    # API Keys
+    API_KEY_HEADER: str = Field(default="X-API-Key", description="API key header name")
+    API_KEYS: str = Field(default="", description="Comma-separated API keys")
+
+    @computed_field
     @property
-    def all_admin_ids(self) -> Set[int]:
-        """Get all admin IDs including owner."""
-        return self.admin_ids | {self.owner_id}
+    def api_keys_list(self) -> List[str]:
+        """Parse API keys from comma-separated string."""
+        if not self.API_KEYS:
+            return []
+        return [key.strip() for key in self.API_KEYS.split(",") if key.strip()]
+
+    # ========================================================================
+    # USER LIMITS & QUOTAS
+    # ========================================================================
     
+    # Free Tier
+    FREE_USER_MAX_LINKS: int = Field(default=10, description="Free user max links")
+    FREE_USER_MIN_INTERVAL: int = Field(default=300, description="Free user min interval")
+    
+    # Premium Tier
+    PREMIUM_USER_MAX_LINKS: int = Field(default=100, description="Premium user max links")
+    PREMIUM_USER_MIN_INTERVAL: int = Field(default=60, description="Premium user min interval")
+    
+    # Admin Limits
+    ADMIN_MAX_LINKS: int = Field(default=1000, description="Admin max links")
+    ADMIN_MIN_INTERVAL: int = Field(default=30, description="Admin min interval")
+
+    # ========================================================================
+    # WEBHOOK CONFIGURATION
+    # ========================================================================
+    
+    WEBHOOK_HOST: Optional[str] = Field(None, description="Webhook host URL")
+    WEBHOOK_PATH: str = Field(default="/webhook/{token}", description="Webhook path")
+    WEBHOOK_PORT: int = Field(default=8443, description="Webhook port")
+    WEBHOOK_LISTEN: str = Field(default="0.0.0.0", description="Webhook listen address")
+    
+    # SSL/TLS
+    WEBHOOK_SSL_CERT: Optional[str] = Field(None, description="SSL certificate path")
+    WEBHOOK_SSL_PRIV: Optional[str] = Field(None, description="SSL private key path")
+
+    @computed_field
     @property
     def webhook_url(self) -> Optional[str]:
         """Generate full webhook URL."""
-        if not self.use_webhook or not self.webhook_host:
-            return None
-        
-        return f"{self.webhook_host.rstrip('/')}{self.webhook_path}"
-    
-    def is_admin(self, user_id: int) -> bool:
-        """Check if user is an admin."""
-        return user_id in self.all_admin_ids
-    
-    def is_owner(self, user_id: int) -> bool:
-        """Check if user is the owner."""
-        return user_id == self.owner_id
+        if self.WEBHOOK_HOST and self.BOT_TOKEN:
+            path = self.WEBHOOK_PATH.format(token=self.BOT_TOKEN)
+            return f"{self.WEBHOOK_HOST}{path}"
+        return None
 
+    # ========================================================================
+    # API SERVER CONFIGURATION
+    # ========================================================================
+    
+    API_ENABLED: bool = Field(default=True, description="Enable API server")
+    API_HOST: str = Field(default="0.0.0.0", description="API host")
+    API_PORT: int = Field(default=8000, description="API port")
+    API_WORKERS: int = Field(default=4, description="API worker count")
+    API_RELOAD: bool = Field(default=False, description="Enable API auto-reload")
+    API_DEBUG: bool = Field(default=False, description="Enable API debug mode")
+    
+    # CORS
+    CORS_ENABLED: bool = Field(default=True, description="Enable CORS")
+    CORS_ORIGINS: str = Field(default="*", description="CORS allowed origins")
+    CORS_METHODS: str = Field(default="GET,POST,PUT,DELETE", description="CORS methods")
+    CORS_HEADERS: str = Field(default="*", description="CORS headers")
 
-class MonitoringSettings(BaseSettingsConfig):
-    """
-    Monitoring Engine Configuration Settings
-    
-    Controls ping intervals, timeout settings, retry logic,
-    and alert thresholds for the monitoring engine.
-    """
-    
-    model_config = SettingsConfigDict(
-        env_prefix="MONITOR_",
-        env_file=".env"
-    )
-    
-    # Ping intervals
-    default_interval: int = Field(
-        default=300,  # 5 minutes
-        ge=30,
-        le=86400,
-        description="Default ping interval in seconds"
-    )
-    min_interval: int = Field(
-        default=60,  # 1 minute
-        ge=30,
-        le=300,
-        description="Minimum allowed ping interval"
-    )
-    max_interval: int = Field(
-        default=86400,  # 24 hours
-        ge=300,
-        le=604800,
-        description="Maximum allowed ping interval"
-    )
-    
-    # Self-ping settings (for Render/Heroku)
-    self_ping_enabled: bool = Field(
-        default=True,
-        description="Enable self-pinging to prevent sleep"
-    )
-    self_ping_url: Optional[str] = Field(
-        default=None,
-        description="URL for self-ping (auto-detected if not set)"
-    )
-    self_ping_interval: int = Field(
-        default=300,  # 5 minutes
-        ge=60,
-        le=900,
-        description="Self-ping interval in seconds"
-    )
-    
-    # HTTP client settings
-    request_timeout: int = Field(
-        default=30,
-        ge=5,
-        le=120,
-        description="HTTP request timeout in seconds"
-    )
-    connect_timeout: int = Field(
-        default=10,
-        ge=3,
-        le=60,
-        description="Connection timeout in seconds"
-    )
-    read_timeout: int = Field(
-        default=20,
-        ge=5,
-        le=120,
-        description="Read timeout in seconds"
-    )
-    
-    # Retry settings
-    retry_enabled: bool = Field(
-        default=True,
-        description="Enable automatic retries on failure"
-    )
-    retry_count: int = Field(
-        default=3,
-        ge=1,
-        le=10,
-        description="Number of retry attempts"
-    )
-    retry_delay: int = Field(
-        default=5,
-        ge=1,
-        le=60,
-        description="Delay between retries in seconds"
-    )
-    retry_backoff_factor: float = Field(
-        default=2.0,
-        ge=1.0,
-        le=5.0,
-        description="Exponential backoff multiplier"
-    )
-    
-    # Alert settings
-    alert_on_first_failure: bool = Field(
-        default=False,
-        description="Send alert on first failure (vs consecutive)"
-    )
-    consecutive_failures_threshold: int = Field(
-        default=3,
-        ge=1,
-        le=10,
-        description="Number of consecutive failures before alert"
-    )
-    alert_cooldown: int = Field(
-        default=300,  # 5 minutes
-        ge=60,
-        le=3600,
-        description="Minimum time between duplicate alerts"
-    )
-    recovery_alert: bool = Field(
-        default=True,
-        description="Send alert when service recovers"
-    )
-    
-    # Concurrency settings
-    max_concurrent_pings: int = Field(
-        default=50,
-        ge=1,
-        le=500,
-        description="Maximum concurrent ping operations"
-    )
-    batch_size: int = Field(
-        default=100,
-        ge=10,
-        le=1000,
-        description="Batch size for ping operations"
-    )
-    
-    # User agent settings
-    user_agent: str = Field(
-        default="UptimeBot/1.0 (Compatible; Monitoring Service)",
-        description="User agent string for HTTP requests"
-    )
-    random_user_agent: bool = Field(
-        default=False,
-        description="Use random user agents for requests"
-    )
-    
-    # SSL settings
-    verify_ssl: bool = Field(
-        default=True,
-        description="Verify SSL certificates"
-    )
-    ssl_error_as_down: bool = Field(
-        default=True,
-        description="Treat SSL errors as service down"
-    )
-    
-    # Status code settings
-    expected_status_codes: Set[int] = Field(
-        default_factory=lambda: {200, 201, 202, 204, 301, 302, 307, 308},
-        description="HTTP status codes considered as 'up'"
-    )
-    
-    # Content validation
-    content_validation_enabled: bool = Field(
-        default=False,
-        description="Enable response content validation"
-    )
-    
-    # Metrics and statistics
-    keep_ping_history_days: int = Field(
-        default=30,
-        ge=1,
-        le=365,
-        description="Days to keep ping history"
-    )
-    statistics_aggregation_interval: int = Field(
-        default=3600,  # 1 hour
-        ge=300,
-        le=86400,
-        description="Interval for statistics aggregation"
-    )
-    
-    @field_validator("expected_status_codes", mode="before")
-    @classmethod
-    def parse_status_codes(cls, v: Any) -> Set[int]:
-        """Parse expected status codes from string or list."""
-        if isinstance(v, str):
-            return {int(x.strip()) for x in v.split(",") if x.strip()}
-        
-        if isinstance(v, (list, set, tuple)):
-            return {int(x) for x in v}
-        
-        return v
-    
-    @model_validator(mode="after")
-    def validate_intervals(self) -> "MonitoringSettings":
-        """Validate interval relationships."""
-        if self.min_interval > self.max_interval:
-            raise ValueError("min_interval cannot be greater than max_interval")
-        
-        if not (self.min_interval <= self.default_interval <= self.max_interval):
-            raise ValueError("default_interval must be between min and max")
-        
-        return self
-    
-    def validate_interval(self, interval: int) -> int:
-        """Validate and clamp interval to allowed range."""
-        return max(self.min_interval, min(interval, self.max_interval))
-
-
-class LoggingSettings(BaseSettingsConfig):
-    """
-    Logging Configuration Settings
-    
-    Comprehensive logging configuration with support for
-    file logging, rotation, and structured output.
-    """
-    
-    model_config = SettingsConfigDict(
-        env_prefix="LOG_",
-        env_file=".env"
-    )
-    
-    # General settings
-    level: LogLevel = Field(
-        default=LogLevel.INFO,
-        description="Minimum logging level"
-    )
-    format: str = Field(
-        default="%(asctime)s | %(levelname)-8s | %(name)s:%(funcName)s:%(lineno)d - %(message)s",
-        description="Log message format"
-    )
-    date_format: str = Field(
-        default="%Y-%m-%d %H:%M:%S",
-        description="Date format in log messages"
-    )
-    
-    # Console logging
-    console_enabled: bool = Field(
-        default=True,
-        description="Enable console logging"
-    )
-    console_colored: bool = Field(
-        default=True,
-        description="Enable colored console output"
-    )
-    console_rich: bool = Field(
-        default=True,
-        description="Use rich library for console output"
-    )
-    
-    # File logging
-    file_enabled: bool = Field(
-        default=True,
-        description="Enable file logging"
-    )
-    file_path: Path = Field(
-        default=Path("logs/uptime_bot.log"),
-        description="Log file path"
-    )
-    file_rotation: str = Field(
-        default="10 MB",
-        description="Log rotation size (e.g., '10 MB', '1 day')"
-    )
-    file_retention: str = Field(
-        default="30 days",
-        description="Log retention period"
-    )
-    file_compression: str = Field(
-        default="gz",
-        description="Compression format for rotated logs"
-    )
-    
-    # Error logging (separate file for errors)
-    error_file_enabled: bool = Field(
-        default=True,
-        description="Enable separate error log file"
-    )
-    error_file_path: Path = Field(
-        default=Path("logs/errors.log"),
-        description="Error log file path"
-    )
-    
-    # Ping logging (detailed ping history)
-    ping_log_enabled: bool = Field(
-        default=True,
-        description="Enable detailed ping logging"
-    )
-    ping_log_path: Path = Field(
-        default=Path("logs/pings.log"),
-        description="Ping log file path"
-    )
-    
-    # JSON logging
-    json_enabled: bool = Field(
-        default=False,
-        description="Enable JSON formatted logging"
-    )
-    json_file_path: Path = Field(
-        default=Path("logs/uptime_bot.json"),
-        description="JSON log file path"
-    )
-    
-    # Performance logging
-    slow_request_threshold: float = Field(
-        default=5.0,
-        ge=0.1,
-        le=60.0,
-        description="Threshold for slow request logging (seconds)"
-    )
-    log_request_body: bool = Field(
-        default=False,
-        description="Log request bodies (may contain sensitive data)"
-    )
-    log_response_body: bool = Field(
-        default=False,
-        description="Log response bodies"
-    )
-    
-    # Debug options
-    log_sql_queries: bool = Field(
-        default=False,
-        description="Log SQL queries (debug mode)"
-    )
-    log_api_calls: bool = Field(
-        default=False,
-        description="Log Telegram API calls"
-    )
-    
-    @field_validator("file_path", "error_file_path", "ping_log_path", "json_file_path")
-    @classmethod
-    def ensure_log_directory(cls, v: Path) -> Path:
-        """Ensure log directory exists."""
-        v.parent.mkdir(parents=True, exist_ok=True)
-        return v
-
-
-class CacheSettings(BaseSettingsConfig):
-    """
-    Caching Configuration Settings
-    
-    Supports Redis and in-memory caching with configurable
-    TTL and eviction policies.
-    """
-    
-    model_config = SettingsConfigDict(
-        env_prefix="CACHE_",
-        env_file=".env"
-    )
-    
-    # Cache backend
-    enabled: bool = Field(
-        default=True,
-        description="Enable caching"
-    )
-    backend: str = Field(
-        default="memory",
-        description="Cache backend: 'memory' or 'redis'"
-    )
-    
-    # Redis settings
-    redis_url: Optional[str] = Field(
-        default=None,
-        description="Redis connection URL"
-    )
-    redis_host: str = Field(
-        default="localhost",
-        description="Redis host"
-    )
-    redis_port: int = Field(
-        default=6379,
-        ge=1,
-        le=65535,
-        description="Redis port"
-    )
-    redis_password: Optional[SecretStr] = Field(
-        default=None,
-        description="Redis password"
-    )
-    redis_db: int = Field(
-        default=0,
-        ge=0,
-        le=15,
-        description="Redis database number"
-    )
-    redis_ssl: bool = Field(
-        default=False,
-        description="Use SSL for Redis connection"
-    )
-    
-    # TTL settings
-    default_ttl: int = Field(
-        default=300,  # 5 minutes
-        ge=1,
-        le=86400,
-        description="Default cache TTL in seconds"
-    )
-    user_ttl: int = Field(
-        default=600,  # 10 minutes
-        ge=1,
-        le=86400,
-        description="User data cache TTL"
-    )
-    link_ttl: int = Field(
-        default=300,  # 5 minutes
-        ge=1,
-        le=86400,
-        description="Link data cache TTL"
-    )
-    stats_ttl: int = Field(
-        default=60,  # 1 minute
-        ge=1,
-        le=3600,
-        description="Statistics cache TTL"
-    )
-    
-    # Memory cache settings
-    memory_max_size: int = Field(
-        default=10000,
-        ge=100,
-        le=1000000,
-        description="Maximum items in memory cache"
-    )
-    memory_eviction_policy: str = Field(
-        default="lru",
-        description="Eviction policy: 'lru', 'lfu', 'fifo'"
-    )
-    
-    # Key prefix
-    key_prefix: str = Field(
-        default="uptimebot:",
-        description="Prefix for all cache keys"
-    )
-    
+    @computed_field
     @property
-    def redis_connection_url(self) -> str:
-        """Generate Redis connection URL."""
-        if self.redis_url:
-            return self.redis_url
-        
-        password_part = ""
-        if self.redis_password:
-            password_part = f":{self.redis_password.get_secret_value()}@"
-        
-        protocol = "rediss" if self.redis_ssl else "redis"
-        
-        return f"{protocol}://{password_part}{self.redis_host}:{self.redis_port}/{self.redis_db}"
+    def cors_origins_list(self) -> List[str]:
+        """Parse CORS origins."""
+        if self.CORS_ORIGINS == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
 
+    # ========================================================================
+    # BACKUP & MAINTENANCE
+    # ========================================================================
+    
+    AUTO_BACKUP_ENABLED: bool = Field(default=True, description="Enable auto backup")
+    BACKUP_INTERVAL: int = Field(default=86400, description="Backup interval (seconds)")
+    BACKUP_PATH: str = Field(default="backups/", description="Backup directory")
+    BACKUP_RETENTION_DAYS: int = Field(default=7, description="Backup retention days")
+    BACKUP_COMPRESS: bool = Field(default=True, description="Compress backups")
+    
+    # Maintenance
+    MAINTENANCE_MODE: bool = Field(default=False, description="Maintenance mode")
+    MAINTENANCE_MESSAGE: str = Field(
+        default="Bot is under maintenance. Please try again later.",
+        description="Maintenance message"
+    )
 
-class SecuritySettings(BaseSettingsConfig):
-    """
-    Security Configuration Settings
+    # ========================================================================
+    # METRICS & ANALYTICS
+    # ========================================================================
     
-    Manages encryption, authentication, and security policies.
-    """
+    # Prometheus
+    METRICS_ENABLED: bool = Field(default=True, description="Enable metrics")
+    METRICS_PORT: int = Field(default=9090, description="Metrics port")
+    METRICS_PATH: str = Field(default="/metrics", description="Metrics endpoint")
     
-    model_config = SettingsConfigDict(
-        env_prefix="SECURITY_",
-        env_file=".env"
-    )
-    
-    # Encryption
-    secret_key: SecretStr = Field(
-        default_factory=lambda: SecretStr(secrets.token_hex(32)),
-        description="Secret key for encryption"
-    )
-    encryption_algorithm: str = Field(
-        default="AES-256-GCM",
-        description="Encryption algorithm"
-    )
-    
-    # Token settings
-    token_expiry: int = Field(
-        default=3600,  # 1 hour
-        ge=60,
-        le=86400,
-        description="API token expiry in seconds"
-    )
-    refresh_token_expiry: int = Field(
-        default=604800,  # 7 days
-        ge=3600,
-        le=2592000,
-        description="Refresh token expiry in seconds"
-    )
-    
-    # IP-based security
-    ip_whitelist_enabled: bool = Field(
-        default=False,
-        description="Enable IP whitelist"
-    )
-    ip_whitelist: Set[str] = Field(
-        default_factory=set,
-        description="Whitelisted IP addresses"
-    )
-    ip_blacklist_enabled: bool = Field(
-        default=False,
-        description="Enable IP blacklist"
-    )
-    ip_blacklist: Set[str] = Field(
-        default_factory=set,
-        description="Blacklisted IP addresses"
-    )
-    
-    # Anti-abuse
-    max_failed_attempts: int = Field(
-        default=5,
-        ge=1,
-        le=20,
-        description="Maximum failed attempts before lockout"
-    )
-    lockout_duration: int = Field(
-        default=900,  # 15 minutes
-        ge=60,
-        le=86400,
-        description="Lockout duration in seconds"
-    )
-    
-    # Content security
-    allowed_url_schemes: Set[str] = Field(
-        default_factory=lambda: {"http", "https"},
-        description="Allowed URL schemes for monitoring"
-    )
-    block_private_ips: bool = Field(
-        default=True,
-        description="Block monitoring of private IP addresses"
-    )
-    block_localhost: bool = Field(
-        default=True,
-        description="Block monitoring of localhost"
-    )
-    
-    # Request validation
-    validate_url_dns: bool = Field(
-        default=True,
-        description="Validate URL DNS resolution"
-    )
-    max_url_length: int = Field(
-        default=2048,
-        ge=50,
-        le=8192,
-        description="Maximum URL length"
-    )
-    
-    @field_validator("ip_whitelist", "ip_blacklist", mode="before")
-    @classmethod
-    def parse_ip_list(cls, v: Any) -> Set[str]:
-        """Parse IP list from string or list."""
-        if isinstance(v, str):
-            return {x.strip() for x in v.split(",") if x.strip()}
-        
-        if isinstance(v, (list, set, tuple)):
-            return set(v)
-        
-        return set()
+    # Statistics
+    STATS_ENABLED: bool = Field(default=True, description="Enable statistics")
+    STATS_CACHE_TTL: int = Field(default=300, description="Stats cache TTL")
+    STATS_HISTORY_RETENTION_DAYS: int = Field(default=90, description="Stats retention")
 
+    # ========================================================================
+    # PERFORMANCE TUNING
+    # ========================================================================
+    
+    # Threading & Async
+    THREAD_POOL_SIZE: int = Field(default=10, description="Thread pool size")
+    PROCESS_POOL_SIZE: int = Field(default=4, description="Process pool size")
+    ASYNC_TIMEOUT: int = Field(default=60, description="Async operation timeout")
+    
+    # Memory Management
+    MAX_MEMORY_MB: int = Field(default=512, description="Maximum memory (MB)")
+    GARBAGE_COLLECTION_ENABLED: bool = Field(default=True, description="Enable GC")
+    GC_THRESHOLD: str = Field(default="700,10,10", description="GC threshold")
 
-class Settings(BaseSettingsConfig):
-    """
-    Main Settings Class
+    # ========================================================================
+    # EXTERNAL SERVICES
+    # ========================================================================
     
-    Aggregates all settings sections and provides the main
-    configuration interface for the application.
-    """
+    # Email
+    EMAIL_ENABLED: bool = Field(default=False, description="Enable email")
+    SMTP_HOST: str = Field(default="smtp.gmail.com", description="SMTP host")
+    SMTP_PORT: int = Field(default=587, description="SMTP port")
+    SMTP_USER: Optional[str] = Field(None, description="SMTP user")
+    SMTP_PASSWORD: Optional[str] = Field(None, description="SMTP password")
+    SMTP_FROM: Optional[str] = Field(None, description="Email from address")
     
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8"
-    )
+    # Sentry
+    SENTRY_ENABLED: bool = Field(default=False, description="Enable Sentry")
+    SENTRY_DSN: Optional[str] = Field(None, description="Sentry DSN")
     
-    # Environment
-    environment: Environment = Field(
-        default=Environment.DEVELOPMENT,
-        description="Application environment"
-    )
-    debug: bool = Field(
-        default=False,
-        description="Enable debug mode"
-    )
+    # Analytics
+    ANALYTICS_ENABLED: bool = Field(default=False, description="Enable analytics")
+    ANALYTICS_ID: Optional[str] = Field(None, description="Analytics ID")
+
+    # ========================================================================
+    # DEVELOPMENT & DEBUG
+    # ========================================================================
     
-    # Application info
-    app_name: str = Field(
-        default="Uptime Bot",
-        description="Application name"
-    )
-    app_version: str = Field(
-        default="1.0.0",
-        description="Application version"
-    )
+    DEBUG: bool = Field(default=False, description="Debug mode")
+    DEV_MODE: bool = Field(default=False, description="Development mode")
+    TESTING: bool = Field(default=False, description="Testing mode")
     
-    # Timezone
-    timezone: str = Field(
-        default="UTC",
-        description="Application timezone"
-    )
+    # Profiling
+    PROFILING_ENABLED: bool = Field(default=False, description="Enable profiling")
+    PROFILING_OUTPUT_PATH: str = Field(default="profiles/", description="Profile output")
+
+    # ========================================================================
+    # TIMEZONE & LOCALIZATION
+    # ========================================================================
     
-    # Web server (for health checks)
-    web_host: str = Field(
-        default="0.0.0.0",
-        description="Web server host"
-    )
-    web_port: int = Field(
-        default=8080,
-        ge=1,
-        le=65535,
-        description="Web server port"
-    )
+    TIMEZONE: str = Field(default="UTC", description="Application timezone")
+    DATE_FORMAT: str = Field(default="%Y-%m-%d %H:%M:%S", description="Date format")
+    DEFAULT_LANGUAGE: str = Field(default="en", description="Default language")
+    SUPPORTED_LANGUAGES: str = Field(default="en,ru,es,fr,de", description="Supported languages")
+
+    @computed_field
+    @property
+    def supported_languages_list(self) -> List[str]:
+        """Parse supported languages."""
+        return [lang.strip() for lang in self.SUPPORTED_LANGUAGES.split(",")]
+
+    # ========================================================================
+    # RENDER SPECIFIC SETTINGS
+    # ========================================================================
     
-    # Nested settings
-    database: DatabaseSettings = Field(
-        default_factory=DatabaseSettings
-    )
-    bot: BotSettings = Field(
-        default_factory=BotSettings
-    )
-    monitoring: MonitoringSettings = Field(
-        default_factory=MonitoringSettings
-    )
-    logging: LoggingSettings = Field(
-        default_factory=LoggingSettings
-    )
-    cache: CacheSettings = Field(
-        default_factory=CacheSettings
-    )
-    security: SecuritySettings = Field(
-        default_factory=SecuritySettings
-    )
+    RENDER_ENABLED: bool = Field(default=True, description="Running on Render")
+    RENDER_INSTANCE_ID: Optional[str] = Field(None, description="Render instance ID")
+    RENDER_SERVICE_NAME: str = Field(default="uptime-bot", description="Render service")
+    RENDER_REGION: Optional[str] = Field(None, description="Render region")
+    PORT: int = Field(default=10000, description="Application port")
+
+    # ========================================================================
+    # FEATURE FLAGS
+    # ========================================================================
     
+    ENABLE_PREMIUM_FEATURES: bool = Field(default=True, description="Premium features")
+    ENABLE_ADMIN_PANEL: bool = Field(default=True, description="Admin panel")
+    ENABLE_USER_DASHBOARD: bool = Field(default=True, description="User dashboard")
+    ENABLE_EXPORT_DATA: bool = Field(default=True, description="Data export")
+    ENABLE_IMPORT_DATA: bool = Field(default=True, description="Data import")
+    ENABLE_BATCH_OPERATIONS: bool = Field(default=True, description="Batch operations")
+    ENABLE_SCHEDULED_REPORTS: bool = Field(default=True, description="Scheduled reports")
+    ENABLE_CUSTOM_DOMAINS: bool = Field(default=True, description="Custom domains")
+    ENABLE_SSL_MONITORING: bool = Field(default=True, description="SSL monitoring")
+    ENABLE_DNS_MONITORING: bool = Field(default=True, description="DNS monitoring")
+    ENABLE_API_MONITORING: bool = Field(default=True, description="API monitoring")
+    
+    # Experimental
+    EXPERIMENTAL_FEATURES: bool = Field(default=False, description="Experimental features")
+    BETA_FEATURES: bool = Field(default=False, description="Beta features")
+
+    # ========================================================================
+    # COMPUTED PROPERTIES
+    # ========================================================================
+
+    @computed_field
     @property
     def is_production(self) -> bool:
-        """Check if running in production environment."""
-        return self.environment == Environment.PRODUCTION
-    
-    @property
-    def is_development(self) -> bool:
-        """Check if running in development environment."""
-        return self.environment == Environment.DEVELOPMENT
-    
-    @property
-    def is_testing(self) -> bool:
-        """Check if running in testing environment."""
-        return self.environment == Environment.TESTING
-    
-    @model_validator(mode="after")
-    def configure_for_environment(self) -> "Settings":
-        """Apply environment-specific configuration."""
-        if self.is_production:
-            # Force secure defaults in production
-            self.debug = False
-            self.database.echo = False
-            self.logging.log_sql_queries = False
-            self.logging.log_request_body = False
-            self.logging.log_response_body = False
-        
-        elif self.is_development:
-            # Development defaults
-            if self.logging.level == LogLevel.INFO:
-                self.logging.level = LogLevel.DEBUG
-        
-        return self
-    
-    def to_dict(self, *, exclude_secrets: bool = True) -> Dict[str, Any]:
-        """Convert settings to dictionary."""
-        data = self.model_dump()
-        
-        if exclude_secrets:
-            # Remove sensitive values
-            def remove_secrets(obj: Any) -> Any:
-                if isinstance(obj, dict):
-                    return {
-                        k: remove_secrets(v)
-                        for k, v in obj.items()
-                        if "password" not in k.lower()
-                        and "secret" not in k.lower()
-                        and "token" not in k.lower()
-                    }
-                elif isinstance(obj, list):
-                    return [remove_secrets(item) for item in obj]
-                return obj
-            
-            data = remove_secrets(data)
-        
-        return data
+        """Check if running in production mode."""
+        return not (self.DEBUG or self.DEV_MODE or self.TESTING)
 
+    @computed_field
+    @property
+    def base_dir(self) -> Path:
+        """Get base directory path."""
+        return Path(__file__).parent.parent
+
+    @computed_field
+    @property
+    def logs_dir(self) -> Path:
+        """Get logs directory path."""
+        logs_path = self.base_dir / "logs"
+        logs_path.mkdir(exist_ok=True)
+        return logs_path
+
+    @computed_field
+    @property
+    def backups_dir(self) -> Path:
+        """Get backups directory path."""
+        backup_path = self.base_dir / self.BACKUP_PATH
+        backup_path.mkdir(exist_ok=True)
+        return backup_path
+
+
+# ============================================================================
+# SETTINGS SINGLETON
+# ============================================================================
 
 @lru_cache()
 def get_settings() -> Settings:
     """
     Get cached settings instance.
     
-    This function is cached to ensure a single settings instance
-    is used throughout the application lifecycle.
-    
     Returns:
-        Settings: Application settings instance
+        Settings instance
     """
     return Settings()
 
 
-# Global settings instance
-settings = get_settings()
+# ============================================================================
+# END OF SETTINGS MODULE
+# ============================================================================
