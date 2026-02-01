@@ -17,8 +17,8 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from database import DatabaseManager
-from bot.handlers import router
+from database.manager import DatabaseManager
+from bot.handlers DatabaseManager router
 from bot.admin_handlers import admin_router
 from utils import get_logger
 from config import get_settings
