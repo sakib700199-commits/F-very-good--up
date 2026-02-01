@@ -10,15 +10,6 @@ License: MIT
 ============================================================================
 """
 
-from database.manager import DatabaseManager
-from database.models import User, MonitoredLink, PingLog, Alert, UserLog, Statistics
+from bot.manager import BotManager
 
-__all__ = [
-    "DatabaseManager",
-    "User",
-    "MonitoredLink",
-    "PingLog",
-    "Alert",
-    "UserLog",
-    "Statistics",
-]
+__all__ = ["BotManager"]
