@@ -18,8 +18,6 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from utils import get_logger
 from config import get_settings
-
-
 logger = get_logger(__name__)
 settings = get_settings()
 
